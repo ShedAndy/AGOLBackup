@@ -9,7 +9,7 @@ username and password - for your portal
 tag - the tag that you have used on AGOL to label the services you'd like to back up 
 download_location - where the outputs will be saved
 
-**WARNING** If run more than once on the same day, the previously downloaded files will be overwritten (unless you re-named or moved them before re-running the script)
+**WARNING** If run more than once on the same day, the previously downloaded files will be overwritten IF there were edits in the interim, OR IF the previously downloaded zip was invalid, OR IF the full_backup parameter is set to True (unless of course you re-named or moved them before re-running the script!)
 
 The script may fail if run on older versions of the API (OK on v1.6.1).  On older versions, failure may occur when trying to download the zipfile containing the fgdb, as support for FileName = "" in item.download() is seemly a recent development at time of writing.
 
