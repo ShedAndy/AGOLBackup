@@ -5,8 +5,11 @@
 A script to backup hosted feature services on ArcGIS Online that have previously been given a specific tag (e.g. "BackMeUp").  This script is designed to be run e.g. nightly as a scheduled task.  If a hosted feature service to be backed up has already been successfully backed up since it was last edited, then the script will not attempt to back it up again. Backups are downloaded to ./backups in the specified output (download) folder, and are filed by the services' name, and then by the date of the backup. A csv log of the each run of the script is saved in a ./logs folder, and a csv index of last successful backed ups, with their locations, is saved in the download folder.
 
 As a minium before running, you need to set the following parameters at the start of the script (all above line 55):
+
 username and password - for your portal
+
 tag - the tag that you have used on AGOL to label the services you'd like to back up 
+
 download_location - where the outputs will be saved
 
 **WARNING** If run more than once on the same day, the previously downloaded files will be overwritten IF there were edits in the interim, OR IF the previously downloaded zip was invalid, OR IF the full_backup parameter is set to True (unless of course you re-named or moved them before re-running the script!)
