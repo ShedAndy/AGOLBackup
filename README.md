@@ -1,5 +1,18 @@
-# AGOLBackup
-Backup tagged feature services on ArcGIS Online to File Geodatabases.
+# AGOL Backup Feature Services
 
-An ArcGIS Python API project to download tagged feature services from ArcGIS Online (AGOL).
+## Backup tagged hosted feature services on ArcGIS Online to File Geodatabases.
 
+A script to backup hosted feature services on ArcGIS Online that have been previously given a specific tag.  This script is designed to be run e.g. nightly as a scheduled task.  If a hosted feature service to be backed up has already been successfully backed up since it was last edited, then the script will not attempt to back it up. Backups are downloaded to a specified folder, and filed by the services' name and then by date of the backup. A log of the each run of the script is saved in a ./logs folder and a history of successfully backed up services with their locations is saved in the download folder.
+
+As a minium before running, you need to set the following parameters at the start of the script (all above line 63):
+username and password - for your portal
+tag - the tag that you have used on AGOL to label the services you'd like to back up 
+download_location - where the outputs will be saved
+
+**WARNING** If run more than once on the same day, the previously downloaded files will be overwritten (unless you re-named or moved them before re-running the script)
+
+The script may fail if run on older versions of the API (OK on v1.6.1).  On older versions, failure may occur when trying to download the zipfile containing the fgdb, as support for FileName = "" in item.download() is seemly a recent development at time of writing.
+
+A pause time (minutes) is speficed by the sleep_time parameter.  This is the time to wait between starting exporting feature services to FGDBs (saved on AGOL) and then downloading the FGDBs to a local location in zip files.  Download seems to be available before exporting to FGDB is complete, which then leads to invalid zip files being downloaded.  The pause time allows the export to FGDB to complete before attempting to download - the time required will depend on the sizes of your feature services (inc. attachments).
+
+Once one of my feature services went over 1.3GB, including attachments, I have found that exporting it to FGDB has become very unreliable. Even with seemingly ample sleep time specified, exporting to FGDB is only successful say 1 out of 4 times. Hence this script checks the downloaded zip to see if it can open it - if it invalid it will attempt to back it up on the following run (even if there have been no further edits in the interim period). 
