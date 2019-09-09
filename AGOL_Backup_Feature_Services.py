@@ -18,15 +18,6 @@
 # Andy Fairbairn, 2019.
 #-------------------------------------------------------------------
 
-#--------------------------------------------------------------------
-# PRINT MESSAGE TO USERS WHO MIGHT BE CONFUSED BY SCHEDULED TASK!
-#---------------------------------------------------------------------
-print("\n\n*****ArcGIS Online BACKUP SCRIPT*****")
-print("*****DO NOT CLOSE THIS WINDOW WHILST RUNNING!!!*****\n")
-print("You can minimise this window and work as normal.")
-print("When the script as completed it will say BACKUP COMPLETED, at which")
-print("point you can close this window if it doesn't do so automatically.\n")
-
 #-------------------------------------------------------------------
 # PARAMETERS
 #-------------------------------------------------------------------
