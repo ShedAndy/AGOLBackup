@@ -2,9 +2,9 @@
 
 ## Backup tagged hosted feature services on ArcGIS Online to File Geodatabases.
 
-A script to backup hosted feature services on ArcGIS Online that have been previously given a specific tag.  This script is designed to be run e.g. nightly as a scheduled task.  If a hosted feature service to be backed up has already been successfully backed up since it was last edited, then the script will not attempt to back it up. Backups are downloaded to a specified folder, and filed by the services' name and then by date of the backup. A log of the each run of the script is saved in a ./logs folder and a history of successfully backed up services with their locations is saved in the download folder.
+A script to backup hosted feature services on ArcGIS Online that have previously been given a specific tag (e.g. "BackMeUp").  This script is designed to be run e.g. nightly as a scheduled task.  If a hosted feature service to be backed up has already been successfully backed up since it was last edited, then the script will not attempt to back it up again. Backups are downloaded to ./backups in the specified output (download) folder, and are filed by the services' name, and then by the date of the backup. A csv log of the each run of the script is saved in a ./logs folder, and a csv index of last successful backed ups, with their locations, is saved in the download folder.
 
-As a minium before running, you need to set the following parameters at the start of the script (all above line 63):
+As a minium before running, you need to set the following parameters at the start of the script (all above line 55):
 username and password - for your portal
 tag - the tag that you have used on AGOL to label the services you'd like to back up 
 download_location - where the outputs will be saved
