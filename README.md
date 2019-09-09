@@ -6,11 +6,11 @@ A script to backup hosted feature services on ArcGIS Online that have previously
 
 As a minium before running, you need to set the following parameters at the start of the script (all above line 55):
 
-username and password - for your portal
+*username* and *password* - for your portal
 
-tag - the tag that you have used on AGOL to label the services you'd like to back up 
+*tag* - the tag that you have used on AGOL to label the services you'd like to back up 
 
-download_location - where the outputs will be saved
+*download_location* - path where the outputs will be saved
 
 **WARNING** If run more than once on the same day, the previously downloaded files will be overwritten IF there were edits in the interim, OR IF the previously downloaded zip was invalid, OR IF the full_backup parameter is set to True (unless of course you re-named or moved them before re-running the script!)
 
