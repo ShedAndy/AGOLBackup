@@ -240,8 +240,8 @@ if full_backup == False:
 #-------------------------------------------------------------------
 # EXPORT TO FGDB
 #-------------------------------------------------------------------
+# Export hosted feature service item to a fgdb item on AGOL
 def export_to_fgdb(item):
-    # Export hosted feature service item to a fgdb item on AGOL
     # Skip if we're not doing a full backup, and the id is not
     # on the list of items needing a fresh backup
     if (full_backup == True) or (item.id in stale_list):
@@ -296,7 +296,7 @@ if len(download_list) > 0:
 #-------------------------------------------------------------------
 # LOGS
 #-------------------------------------------------------------------
-# Check success of downloads and undate log files accordingly
+# Check success of downloads and update log files accordingly
 def zip_path(item):
     return r"{0}\backups\{1}\{2}_{1}.zip".format(download_location,item.name,date_today)
 
