@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 #-------------------------------------------------------------------
 # Script to backup hosted feature services that have a specific tag.  
 #
@@ -11,11 +5,11 @@
 # downloaded files will be overwritten (unless you re-named or 
 # moved them before re-running the script)
 #
-# Older versions of the API may fail when trying to download tje zipfile
-# containing the fgdb, as support for FileName = "" in item.download()
+# Older versions of the API may fail when trying to download zipfile
+# containing the fgdb as support for FileName = "" in item.download()
 # is seemly a recent development at time of writing.
 #
-# Andy Fairbairn, 2019.
+# Andy Fairbairn, 2020. 
 #-------------------------------------------------------------------
 
 #-------------------------------------------------------------------
@@ -33,26 +27,42 @@ full_backup = False
 
 # Tag - tag used to indicate that the hosted feature service needs backing up 
 # (don't use this tag for anything else!)
-tag = "backmeup"
+tag = 'backmeup'
 
 # Download location - the zipped file geodatabases will be put into a folder named by date. 
 # Make sure this location is writable. No trailing slash on end of folder path!!
 #download_location = r"C:\TestBackupFolder"
-download_location = r""
+download_location = r"\\BBOWTBIODATA\ArcGIS Online Scripts\Backup"
 
 # File name for the record of successful backups - saved in download location
 successful_backups = 'Last_Successful_Backup.csv'
 
 # Time to pause (minutes) - time between starting exporting to FGDBs and downloading the zip files.
 # Download seems to be available before exporting is complete, leading to invalid zip files being
-# downloaded.  Therefore, add a pause time to wait before attempting to download - time required will
+# downloaded.  Add a pause time to wait before attempting to download - time required will
 # depend on how large your feature service (inc. attachments) is.
-sleep_time = 90
+sleep_time = 60
 
-# Max number of services to back up - searching has maximum number of results to return parameter.
-# Set this to be higher than the number of hosted feature services you want to backup
+# If invalid zip files are downloaded, time to wait before re-attempting to download
+reattempt_time = 60
+
+# Number of reattempts if downloaded files are invalid
+no_attempts = 3
+
+# Max number of services to back up - searching has maximum number of results to return.
+# Set this to be higher than the number of hosted feature services with the 
+# backup tag that you want to backup
 max_results = 50
 #-------------------------------------------------------------------
+
+#--------------------------------------------------------------------
+# PRINT MESSAGE TO USERS WHO MIGHT BE CONFUSED BY SCHEDULED TASK!
+#---------------------------------------------------------------------
+print("\n\n*****ArcGIS Online BACKUP SCRIPT*****")
+print("*****DO NOT CLOSE THIS WINDOW WHILST RUNNING!!!*****\n")
+print("You can minimise this window and work as normal.")
+print("When the script has completed it will say BACKUP COMPLETED, at which")
+print("point you can close this window if it doesn't do so automatically.\n")
 
 #-------------------------------------------------------------------
 # MODULES
@@ -69,25 +79,68 @@ import pandas as pd
 # log into portal
 gis = GIS(portal_url, username, password)
 
-
-# In[ ]:
-
-
 # Today's date, used in file path of downloaded backups
 date_today_obj = date.today()
 date_today = date_today_obj.strftime('%Y%m%d')
 year = date_today_obj.strftime('%Y')
 month = date_today_obj.strftime('%m')
+ts_today = int(round(datetime.now().timestamp()*1000,0))
 
-# Where the last successfull backup log will be kept
+# Log for this backup run
+run_log_folder = download_location + '\\logs'
+
+# Where the log last successfull backup log will be kept
 success_log_csv_path = download_location + '\\' + successful_backups
+#success_log_csv_path = r"D:\ArcGIS Online Backups\test\Last_Successful_Backup.csv"
 
-# Fields in the last successfull backup log that will be updated from current run log
-update_fields = ["item_name", "item_title", "last_edit_date", "last_edit_date_ts", "path"]
+#-------------------------------------------------------------------
+# GENERAL FUNCTIONS
+#-------------------------------------------------------------------
 
+def stamp_to_text(ts):
+    return datetime.utcfromtimestamp(ts/1e3).strftime('%d/%m/%Y %H:%M:%S')
 
-# In[ ]:
+def check_create_folder(path):
+    if not os.path.isdir(path):
+        print(path + " doesn't exist - attempting to create it")
+        try:
+            os.makedirs(path)
+        except:
+            print("Unable to create folder, check permissions")
 
+def set_indexes(df_list,index):
+    for df in df_list:
+        if df.index.name != index:
+            df.set_index(index, inplace=True)
+
+def reset_indexes(df_list):
+    for df in df_list:
+        if df.index.name is not None:
+            df.reset_index(inplace=True)
+
+def update_df(df,updating_df):
+    # Set the dataframe indexes to a matching field
+    set_indexes([df,updating_df],'item_id')
+    
+    # Update exising rows in the df with values from updating_df
+    df.update(updating_df)
+    
+    # Append rows from updating_df that are not in df
+    index_diff = updating_df.index.difference(df.index)
+    updated_df = df.append(updating_df.loc[index_diff.values.tolist(),:], sort=False)
+    
+    # Reset dataframe indexes to the default
+    reset_indexes([df,updating_df,updated_df])
+    return updated_df
+
+def export_df(df,path):
+    try:
+        # Write updated values out to last successful backup csv
+        df.to_csv(path, index = False)
+        return True
+    except:
+        print("Unable to write dataframe to {} - Open in Excel? Check permissions for the folder.".format(path))
+        return False
 
 #-------------------------------------------------------------------
 # SEARCH FOR HOSTED FEATURE SERVICES TO BACKUP
@@ -96,282 +149,265 @@ update_fields = ["item_name", "item_title", "last_edit_date", "last_edit_date_ts
 # Search based on the specified tag, limit type to Feature Layer
 # Returns a maximum of 50 results, so increase this if you have more than 50
 # feature services to backup using max_results parameter
-service_list = gis.content.search(query="tags:"+tag, item_type = "Feature Layer", max_items = max_results)
-print('Found ' + str(len(service_list)) + ' feature service(s) with the tag "' + tag + '" to backup\n')
+item_list = gis.content.search(query="tags:"+tag, item_type = "Feature Layer", max_items = max_results)
+print('Found {} feature service(s) with the tag "{}" to backup\n'.format(len(item_list),tag))
+
+if len(item_list) < 1:
+    exit()
 
 #-------------------------------------------------------------------
-# PREVIOUS BACKUP INFO
+# UPDATE INFO ON HOSTED FEATURE SERVICES
 #-------------------------------------------------------------------
 
-# Initialize variable to determine if success log found and valid(ish)
-# Used in BACKUP LOG - Part 2
+def item_info(item):
+    # Function to take an item id and return last update date of the
+    # of the item, and the last edit date of feature class or tables
+    
+    updated_ts = item.modified
+    
+    # Get the last_edit_date for the HFS item - believe the only way
+    # to get this is to check each layer and table in feature service
+    # last edit date across all item layers and tables
+    last_edit_date_ts = 0 
+    
+    if item._has_layers() == True:
+        for flyr in item.layers:
+            #print(flyr.properties.name)
+            if flyr.properties.editingInfo.lastEditDate >= last_edit_date_ts:
+                last_edit_date_ts = flyr.properties.editingInfo.lastEditDate
+
+        for tbl in item.tables:
+            #print(tbl.properties.name)
+            if tbl.properties.editingInfo.lastEditDate >= last_edit_date_ts:
+                last_edit_date_ts = tbl.properties.editingInfo.lastEditDate
+    
+    last_edit_date = stamp_to_text(last_edit_date_ts)
+    
+    return {'item_id':item.id,
+            'item_name':item.name,
+            'item_title':item.title,
+            'updated_ts':updated_ts,
+            'last_edit_date':last_edit_date,
+            'last_edit_date_ts':last_edit_date_ts}
+
+# Open or create log/list of last successful backups
 success_log_exists = False
 
+# Only backing up HFS that have been edited since last successful backup
+# Try to open log used to check this, if unsuccessful just backup everthing
+try:
+    success_log_df = pd.read_csv(success_log_csv_path)
+    success_log_exists = True
+except:
+    # Unsuccessful, so backup up all tagged HFS
+    full_backup = True
+    print("Couldn't open log of successful backups, backing up all services")
+    print(success_log_csv_path)
+    success_log_exists = False
+    print("------------------")
+
+# Gather info about items with the backup tag
+item_info_list = []
+for item in item_list:
+    # item_info() returns a dictionary with layer/table last edit date and item update date
+    item_info_list.append(item_info(item))
+
+items_df = pd.DataFrame(item_info_list)
+#success_log_df = pd.read_csv(success_log_csv_path)
+
+if success_log_exists:
+    # Update the last edited dates of items in the last good backup list
+    # and add any not new items to be backed up that are not already in there
+    success_log_df = update_df(success_log_df,items_df)
+
+else:
+    # Create a last good backup list from items_df
+    success_log_df = items_df.copy()
+    success_log_df.insert(5,"backup_date","Not yet backed up")
+    success_log_df.insert(6,"backup_ts",0)
+    success_log_df.insert(7,"zip_path","Not yet backed up")
+
+# Export updated/newly created success_log_df
+export_df(success_log_df, success_log_csv_path)
+
+#if not a full backup, list of items that have a stale backup
 if full_backup == False:
-    # Only backing up HFS that have been edited since last successful backup
-    # Try to open log used to check this, if unsuccessful just backup everthing
-    try:
-        success_log_df = pd.read_csv(success_log_csv_path)
-        success_log_exists = True
-    except:
-        # Unsuccessful, so backup up all tagged HFS
-        full_backup = True
-        print("Couldn't open log of successful backups, backing up all services")
-        print(success_log_csv_path)
-        success_log_exists = False
-        print("------------------")
-
-
-# In[ ]:
-
+    query =  ((success_log_df['backup_ts'] < success_log_df['last_edit_date_ts'])
+              | (success_log_df['backup_ts']!=success_log_df['backup_ts'])) 
+    stale_list = success_log_df[query]['item_id'].values.tolist()
+    #print(stale_list)
 
 #-------------------------------------------------------------------
 # EXPORT TO FGDB
 #-------------------------------------------------------------------
-
-# list of dicts about HFS that have been backed up {item_id, item_name, item_title, item_led, item_led_ts, fgdb}
-backup_list = []
-
-# a list to contain log info for this backup run
-log_list = []
-
-# cycle through list of services with the tag
-for service in service_list:
-    # get the service as an item object
-    item = gis.content.get(service.itemid)
-    
-    # double check that we're only dealing with hosted feature services, not views
-    if ("Feature Service" in item.typeKeywords) and ("Hosted Service" in item.typeKeywords):
+def export_to_fgdb(item):
+    # Export hosted feature service item to a fgdb item on AGOL
+    # Skip if we're not doing a full backup, and the id is not
+    # on the list of items needing a fresh backup
+    if (full_backup == True) or (item.id in stale_list):
         
-        # Get the last_edit_date for the HFS item - believe the only way
-        # to get this is to check each layer and table in feature service
-        # last edit date across all item layers and tables
-        item_led_ts = 0 
-
-        for flyr in item.layers:
-            #print(flyr.properties.name)
-            if flyr.properties.editingInfo.lastEditDate >= item_led_ts:
-                item_led_ts = flyr.properties.editingInfo.lastEditDate
-
-        for tbl in item.tables:
-            #print(tbl.properties.name)
-            if tbl.properties.editingInfo.lastEditDate >= item_led_ts:
-                item_led_ts = tbl.properties.editingInfo.lastEditDate        
-        
-        item_led =datetime.utcfromtimestamp(item_led_ts/1e3).strftime('%d/%m/%Y %H:%M:%S')
-        print('{0}: last edit date = {1}'.format(item.name, item_led))
-        
-        # If not doing a full backup, check if HFS edited since last backup
-        if full_backup == False:
-            
-            if item.id in success_log_df['item_id'].values:
-                # In successful back up log
-
-                # Get the last_edit_date of the last successful backup
-                led_ts_s = success_log_df.loc[success_log_df['item_id'] == item.id, 'last_edit_date_ts']
-                success_log_led_ts = led_ts_s[led_ts_s.last_valid_index()]
-                
-                print("data last edit: {0} vs log last edit: {1} difference = {2}".format(item_led_ts, success_log_led_ts, (item_led_ts - success_log_led_ts)))
-                
-                # Continue For loop if HFS last_edit_data is not more recent
-                # that what is in the successful backup log
-                if not item_led_ts > success_log_led_ts:
-                    # Not edited since last backup - record in log
-                    
-                    log_row = {"item_id":item.id, "item_name": item.name, "item_title":item.title, "last_edit_date": item_led, "last_edit_date_ts": item_led_ts, "path":"N/A", "status": "not backed up - no edits" }
-                    log_list.append(log_row)
-                    print("Not edited since last backup")
-                    continue
+        print("Exporting {} to fgdb".format(item.name))
         
         # create a name for the FGDB to be exported using today's date and the service name
         fgdb_name = date_today + '_' + item.name
+        fgdb = item.export(fgdb_name, 'File Geodatabase', parameters=None, wait='True')
+        download_list.append({'id':fgdb['exportItemId'], 'item_id':item.id, 'item_name':item.name})
+        
+        return fgdb
+    
+# download_list will be filled by calls to export_to_fgdb()
+download_list = []
 
-        # export the current service to a FGDB, and add to a list
-        print('Exporting ' + item.name + ' to a file geodatabase...')
-        fgdb = service.export(fgdb_name, 'File Geodatabase', parameters=None, wait='True')
+for item in item_list:
+    fgdb = export_to_fgdb(item)
 
-        # also add the feature service item to a list
-        backup_list.append({'item_id':item.id, 'item_name':item.name, 'item_title':item.title, 'item_led':item_led, 'item_led_ts':item_led_ts, 'fgdb_name': fgdb_name, 'fgdb':fgdb})
-    else:
-        print('**** {0} ({1}) is not a hosted feature service, not exported ****'.format(item.title, item.name))
-print(' ')       
-print('Exporting {0} Feature Services to FGDB.'.format(len(backup_list)))
+#-------------------------------------------------------------------
+# DOWNLOAD ZIPPED FGDBs
+#-------------------------------------------------------------------   
 
+def download_fgdb(download):
+    fgdb_item = gis.content.get(download['id'])
+    
+    #download_path = download_location + '\\' + year +'\\'+ month +'\\' + date_today
+    download_path = download_location + '\\backups\\' + download['item_name']
 
-# In[ ]:
+    # If download_path folder doesn't exist, create it
+    check_create_folder(download_path)
 
+    try:
+        # If using an older ArcGIS API version, file_name may not be a parameter of 
+        # item.download, just have to go with save_path, and deal with fact any 
+        # underscores in the fgdb name will be removed by default in a different way
+        if fgdb_item.download(save_path=download_path, file_name=fgdb_item.name):
+            print ('Downloading {} to {}'.format(fgdb_item.name,download_path ))                                
+    except:
+        print("Error - Unable to download {} to {}".format(fgdb_item.name,download_path ))
 
-if len(backup_list) > 0:
-    #-------------------------------------------------------------------
-    # DOWNLOAD ZIPPED FGDBs
-    #-------------------------------------------------------------------
-
-    # Pause to allow exporting to FGDB to complete
-    print('Pausing for ' + str(sleep_time) + ' minutes to allow exporting to complete... \n')
+if len(download_list) > 0:
+     # Pause to allow exporting to FGDB to complete
+    print('Pausing for {} minutes to allow exporting to complete... \n'.format(sleep_time))
 
     # Convert sleep_time parameter, specified in minutes, into seconds
-    time.sleep(sleep_time*60)
-            
-    # cycle through list of exported FGDBs, downloading them
-    for backup in backup_list:
-        # get the item object for the exported FGDB
-        fgdb_item = gis.content.get(backup['fgdb']['exportItemId'])
-        
-        # make a path to save the downloaded to, in a sub-folder named today's date if it doesn't
-        # already exist
-        
-        # Change here to file by e.g. date
-        #download_path = download_location + '\\' + year +'\\'+ month +'\\' + date_today
-        download_path = download_location + '\\backups\\' + backup['item_name']
-        
-        # Record the path of the downloaded zip for checking later
-        backup['path'] = download_path + '\\' + backup['fgdb_name'] + ".zip"
-        
-        # If download_path folder doesn't exist, create it
-        if not os.path.isdir(download_path):
-            print(download_path + " doesn't exist - attempting to create it")
-            try:
-                os.makedirs(download_path)
-            except:
-                print("Unable to create folder, check permissions")
-        
-        # Download the file
-        print ('Downloading ' + backup['fgdb_name'] + ' to ' + download_path +'...')
-        
-        try:
-            # If using an older ArcGIS API version, file_name may not be a parameter of 
-            # item.download, just have to go with save_path, and deal with fact any 
-            # underscores in the fgdb name will be removed by default in a different way
-            #if fgdb_item.download(save_path = download_path):
-            if fgdb_item.download(save_path=download_path, file_name=(backup['fgdb_name']+".zip")):
-                print('Downloaded!')                                
-        except:
-            print("Unable to download file")
-                                  
+    #time.sleep(sleep_time*60)
+    
+    for download in download_list:
+        download_fgdb(download)
 
+#-------------------------------------------------------------------
+# LOGS
+#-------------------------------------------------------------------
+# Check success of downloads and undate log files accordingly
+def zip_path(item):
+    return r"{0}\backups\{1}\{2}_{1}.zip".format(download_location,item.name,date_today)
 
-# In[ ]:
+def check_zip(item):
+        
+    try:
+        with zipfile.ZipFile(zip_path(item)) as test_result:
+            #print('{} backup is OK'.format(item.name))
+            test_result.close
+            return 'success'
+    except:
+        print(item.name + " backup is invalid or doesn't exist")
+        return 'fail'
 
+def create_run_log():
+    log_list = []
+    for item in item_list:
+        log_row = {'item_id':item.id,
+                   'item_name':item.name,
+                   'item_title':item.title,
+                   'zip_path':zip_path(item),
+                   'status': "Backup still fresh"}
+
+        if (full_backup == True) or (item.id in stale_list): 
+            log_row['status'] = check_zip(item)
+        log_list.append(log_row)
+    return log_list
+
+def export_run_log():
+    df = pd.DataFrame(create_run_log())
+    check_create_folder(run_log_folder)
+    run_log_path = r"{}\{}_backup_run_log.csv".format(run_log_folder,date_today)
+    export_df(df,run_log_path)
+    return df
+
+def update_logs():
+    # Export run log to csv and get a DataFrame
+    run_df = export_run_log()
+    # Use the run log to update last good backup list
+    run_df.insert(len(run_df.columns),"backup_date",stamp_to_text(ts_today))
+    run_df.insert(len(run_df.columns),"backup_ts",ts_today)
+    update_df(success_log_df,run_df[run_df['status']=='success'])
+    export_df(success_log_df,success_log_csv_path)
+    return run_df
+
+run_df = update_logs()
+
+#-------------------------------------------------------------------
+# RE-ATTEMPTS
+#-------------------------------------------------------------------
+# If there were any download failures, have another go after a pause
+if len(download_list) > 0:
+    fail_list = run_df[run_df['status']=='fail']['item_id'].values.tolist()
+    attempts = 0
+    if (len(fail_list) > 0) & (len(fail_list)!=len(download_list)):
+        # At least one failure to download - or if all downloads, probably a more 
+        # fundamental issue
+        print('{} of {} fgdb zips did not download'.format(len(fail_list),len(download_list)))
+
+        while attempts < no_attempts:
+
+            if (len(fail_list) > 0):
+                # PAUSE AGAIN
+                # Time to wait before re-attempting to download fgdb
+
+                print("Reattempting download in {} minutes".format(reattempt_time))
+
+                time.sleep(reattempt_time*60)
+
+                for download in download_list:
+                    if download['item_id'] in fail_list:
+                        download_fgdb(download)
+
+                run_df = update_logs()
+
+                fail_list = run_df[run_df['status']=='fail']['item_id'].values.tolist()
+
+                attempts +=1
+            else:
+                attempts = 3
+
+    success_list = run_df[run_df['status']=='success']['item_name'].values.tolist()
+    print("\n{} of {} fgdb successfully downloaded".format(len(success_list),len(download_list)))
+    for success in success_list:
+        print(success)
+    if (len(fail_list) > 0):
+        print('\n{} of {} fgdb zips did not download'.format(len(fail_list),len(download_list)))
+        fail_names = run_df[(run_df['status']=='fail')]['item_name'].values.tolist()
+        for name in fail_names:
+            print(name)
+        #print("***try increasing the pause time between exporting and downloading the feature service****")
 
 #-------------------------------------------------------------------
 # DELETE FGDBs FROM PORTAL
 #-------------------------------------------------------------------
 # Now that the exported FGDBs have been downloaded as zips they can be
 # deleted from the portal
-# Cycle through list of attempted backups, delete fgdb item
-if len(backup_list) > 0:
-    for backup in backup_list:
-        # get the item object for the exported FGDB
-        fgdb_item = gis.content.get(backup['fgdb']['exportItemId'])
+def delete_fgdb(fgdb):
+    # get the item object for the exported FGDB
+    fgdb_item = gis.content.get(fgdb['id'])
 
-        # delete the FGDB from AGOL
-        print ('Deleting ' + fgdb_item.title + ' from ' + portal_url)
+    # delete the FGDB from AGOL
+    print ('Deleting {} from {}'.format(fgdb['item_name'], portal_url))
+    try:
         if fgdb_item.delete():
             print('Deleted!')
-
-
-# In[ ]:
-
-
-#-----------------------------
-# BACKUP LOG - Part 1
-#-----------------------------
-# Log for this run of the backup
-# Test the validity of the downloaded zip file containing fgdb
-# Result recorded in status field. This run log is is then used
-# to update an overall record of the last successful backup of
-# HFS in the backup schedule.
-if len(backup_list)>0:
-    for backup in backup_list:
-        # Test whether downloaded fgdb exists and valid
-        zip_path = backup['path']
-        print("testing: " + zip_path)
-        try:
-            with zipfile.ZipFile(zip_path) as test_result:
-                print(backup['item_title'] + ' backup is OK')
-                test_result.close
-                status = 'success'
-        except:
-            print(backup['item_title'] + " backup is invalid or doesn't exist")
-            print("***try increasing the pause time between exporting and downloading the feature service****") 
-            status = 'fail'
-        log_row = {"item_id":backup['item_id'], "item_name": backup['item_name'], "item_title":backup['item_title'], "last_edit_date": backup['item_led'], "last_edit_date_ts": backup['item_led_ts'], "path":zip_path, "status": status }
-        #print(log_row)
-        log_list.append(log_row)
-
-# Will log run even if no backups were made (len(backup_list)==0) because
-# no HFS edited since last successful backup. If no HFS with the search
-# tags were found in the first place, no run log will be created
-if(len(log_list)>0):
-    log_df = pd.DataFrame(log_list)
-
-    # Save out csv file of run backup log
-    
-    # Check/Create log folder
-    log_folder = download_location + '\\logs'
-    if not os.path.isdir(log_folder):
-        print(log_folder + "doesn't exist - attempting to create it")
-        try:
-            os.makedirs(log_folder)
-        except:
-            print("Unable to create log folder, check permissions")
-    
-    log_csv_path = log_folder + '\\' + date_today + '_backup_run_log.csv'
-    try:
-        log_df.to_csv(log_csv_path, index = False)
     except:
-        print("Could not save log file - check permissions, does someone have it open in Excel?")
-else:
-    print("No feature services were found to backup")
+            print('ERROR - could  not delete {}'.format(fgdb['item_name']))
 
-    
-# ------------------------
-# BACKUP LOG - Part 2
-# ------------------------
-# Update the Last Successful Backup Log using run log that has just be generated.
-# success_log_df dataframe may have been created in PREVIOUS BACKUP INFO
-# section
-
-# Only if backups were attempted (at least one HFS edited since last
-# successful backup)
-if len(backup_list) > 0:
-    # Check if there is anything to update (backup status == 'success' in current run)
-    s = log_df['status']=='success' 
-    if True in s.values:
-        # At least one successful backup to record
-
-        if success_log_exists and (success_log_df.shape[0]>0):
-            #print(success_log_df.head(1))
-
-            # note that merging casts the timestamp columns (last_edit_date/_r) as 
-            # floats if they contain NaN
-            merge_df = success_log_df.merge(log_df, how = 'outer', on='item_id', suffixes=('', '_r'))
-
-            # Select only the rows where current run last_edit_date_r is more recent
-            # than success log last_edit_date (or is blank), and the backup was successful
-            query = ((merge_df['last_edit_date_ts_r'] > merge_df['last_edit_date_ts'] ) | (merge_df['last_edit_date_ts'].isna())) & (merge_df['status'] == 'success')
-
-            merge_df.loc[query,'item_name':'path'] = merge_df.loc[query,'item_name_r':'path_r'].values
-
-            success_log_df = merge_df.loc[:,'item_id':'path']
-
-        else:
-            # Last successful backup log wasn't found, use current run log - but 
-            # only successful backups (series s)
-            success_log_df = log_df.loc[s,'item_id':'path']
-
-        print("""Writing new index of successful backups to:
-        """ + success_log_csv_path)
-        try:
-            # Write updated values out to last successful backup csv
-            success_log_df.to_csv(success_log_csv_path, index = False)
-        except:
-            print("Unable to write success log - Open in Excel? Check permissions for the folder.")
-
+if len(download_list) > 0:
+    for download in download_list:
+        delete_fgdb(download)
         
-############## END ##############
-
 print("BACKUP COMPLETED")
-# Pause to allow user to read print output
-#time.sleep(2*60)
-
